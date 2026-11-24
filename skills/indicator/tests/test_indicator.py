@@ -637,6 +637,7 @@ def test_static_variable_next_to_daily_series(tmp_path, indicator_fn):
     rule = "land_sea_mask >= 0.5 and precip >= 1"
     run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", rule, "--time-dim", "time")
     np.testing.assert_array_equal(_cell(out).values, [1.0, 1.0, 1.0])
+    assert xr.open_zarr(out, consolidated=True)["indicator"].dims == ds["precip"].dims
     with pytest.raises(SystemExit) as exc:
         run_skill(
             indicator_fn,

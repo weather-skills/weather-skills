@@ -298,6 +298,8 @@ def evaluate_spec(
     combine = spec.combinator or "and"
     for other in masks[1:]:
         out = _combine(out, other, combine)
+    # Keep the dim order of the widest clause, not of whichever clause came first.
+    out = out.transpose(*max(masks, key=lambda m: m.ndim).dims, ...)
     return out.astype("float32")
 
 
