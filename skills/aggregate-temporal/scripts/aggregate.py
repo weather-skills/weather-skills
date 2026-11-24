@@ -395,8 +395,9 @@ def aggregate(
         if raw.size == 0:
             raise UsageError(f"no {key} bins contained samples on {dim}")
         later = 0
-        cutoff = pd.Timestamp(end_time) + (shift_day or pd.Timedelta(0))
+        cutoff = end_time
         if raw.dtype.kind == "M":
+            cutoff = pd.Timestamp(end_time) + (shift_day or pd.Timedelta(0))
             later = int((raw >= cutoff.to_datetime64()).sum())
         if later:
             print(
