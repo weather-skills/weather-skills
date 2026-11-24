@@ -287,19 +287,24 @@ def evaluate_spec(
     Clause windows are in days; ``step_days`` is the spacing of ``dim``.
     """
     masks = []
+    order = []  # input dims, in an order every variable the rule reads agrees with
     for clause in spec.clauses:
         name = variable_override or clause.variable
         if name not in ds:
             raise UsageError(
                 f"variable {name!r} missing from --input. Available: {list(ds.data_vars)}"
             )
+        dims = ds[name].dims
+        for i, d in enumerate(dims):
+            if d not in order:
+                later = [order.index(x) for x in dims[i + 1 :] if x in order]
+                order.insert(min(later, default=len(order)), d)
         masks.append(_evaluate_clause(ds[name], clause, dim, step_days))
     out = masks[0]
     combine = spec.combinator or "and"
     for other in masks[1:]:
         out = _combine(out, other, combine)
-    # Keep the dim order of the widest clause, not of whichever clause came first.
-    out = out.transpose(*max(masks, key=lambda m: m.ndim).dims, ...)
+    out = out.transpose(*(d for d in order if d in out.dims), ...)
     return out.astype("float32")
 
 

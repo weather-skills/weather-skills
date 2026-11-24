@@ -674,3 +674,17 @@ def test_static_precip_takes_step_from_data_interval(tmp_path, indicator_fn):
     np.testing.assert_array_equal(
         xr.open_zarr(out, consolidated=True)["indicator"].values, [[0.0, 1.0]]
     )
+
+
+def test_output_keeps_input_dim_order(tmp_path, indicator_fn):
+    ds = make_forecast(n_step=3, lats=(1.0,), lons=(10.0, 11.0), name="tp", fill=5.0, members=2)
+    ds["tp"].attrs[DATA_INTERVAL_ATTR] = "1 day"
+    ds["land_sea_mask"] = (("latitude", "longitude"), [[0.2, 0.9]], {"units": "1"})
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "land_sea_mask >= 0.5 and tp > 1"
+    )
+    mask = xr.open_zarr(out, consolidated=True)["indicator"]
+    assert mask.dims == ("number", "step", "latitude", "longitude")
+    np.testing.assert_array_equal(mask.isel(number=0, step=0).values, [[0.0, 1.0]])
