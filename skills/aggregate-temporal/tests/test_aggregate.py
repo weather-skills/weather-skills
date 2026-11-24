@@ -1066,3 +1066,61 @@ def test_weeks_of_06_utc_days_start_at_06_utc(tmp_path, aggregate):
     result = xr.open_zarr(out)
     np.testing.assert_array_equal(result["time"].values, days[[0, 7]])
     np.testing.assert_allclose(result[AGGREGATION_COVERAGE_COORD].values, [1.0, 1.0])
+
+
+def _five_minute_station():
+    """Three days of 5-minute rates: 24 mm day-1 from 03 to 09 UTC on day 2, a gap from day 3 20:00."""
+    t = pd.date_range("2026-11-17", "2026-11-20", freq="5min", inclusive="left", name="time")
+    v = np.zeros((t.size, 1))
+    v[(t >= "2026-11-18 03:00") & (t < "2026-11-18 09:00"), 0] = 24.0
+    v[t >= "2026-11-19 20:00", 0] = np.nan
+    precip = xr.DataArray(
+        v, dims=("time", "station_id"), attrs={"units": "mm day-1", "data_interval": "5 minute"}
+    )
+    return xr.Dataset(
+        {"precip": precip},
+        coords={"time": t, "station_id": ["S1"], "latitude": ("station_id", [0.0]),
+                "longitude": ("station_id", [36.0])},
+        attrs={"featureType": "timeSeries"},
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("extra", [[], ["--end-time", "2026-11-19"]])
+def test_day_start_hour_bins_sub_daily_input_from_that_hour(tmp_path, aggregate, extra):
+    src = write_zarr(_five_minute_station(), tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(
+        aggregate, "-i", str(src), "-o", str(out), "--period", "daily",
+        "--day-start-hour", "6", *extra,
+    )  # fmt: skip
+    ds = xr.open_zarr(out, consolidated=True)
+    # The first bin, 2026-11-16 06:00, holds only 00-06 UTC of the first day.
+    assert float(ds["aggregation_coverage"].values[0]) == pytest.approx(0.25)
+    ds = ds.sel(time=slice("2026-11-17 06:00", None))
+    labels = pd.DatetimeIndex(ds["time"].values)
+    assert list(labels[:2]) == [pd.Timestamp("2026-11-17 06:00"), pd.Timestamp("2026-11-18 06:00")]
+    precip = ds["precip"].values[:, 0]
+    assert precip[0] == pytest.approx(3.0)  # 03-06 UTC: 3 h of 24 mm day-1 over 24 h
+    assert precip[1] == pytest.approx(3.0)  # 06-09 UTC
+    assert float(ds["aggregation_coverage"].values[0]) == pytest.approx(1.0)
+    if not extra:  # 2026-11-19 06:00 bin: data to 20:00, no samples after 00:00
+        assert float(ds["aggregation_coverage"].values[2]) == pytest.approx(14 / 24)
+
+
+@pytest.mark.parametrize(
+    "extra", [["--period", "monthly"], ["--window", "daily"], ["--period", "6 hour"]]
+)
+def test_day_start_hour_exits_2_where_it_does_not_apply(tmp_path, aggregate, extra):
+    src = write_zarr(_five_minute_station(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), *extra,
+                  "--day-start-hour", "6")  # fmt: skip
+    assert exc.value.code == 2
+
+
+def test_day_start_hour_exits_2_on_daily_input(tmp_path, aggregate):
+    src = write_zarr(make_gridded(n_time=14, fill=2.0), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"),
+                  "--period", "weekly", "--day-start-hour", "6")  # fmt: skip
+    assert exc.value.code == 2
