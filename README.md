@@ -20,6 +20,30 @@ Built as [Agent Skills](https://agentskills.io).
 
 ## Skills
 
+| `ecmwf-fetch` | All ECMWF forecasts, one `--product` per call: `s2s` (46-day daily ensemble; dynamical.org, then the ECMWF Data Store for pre-2026 inits, ocean and other fields), `s2s-6h`, `ifs-ens` (15-day 0.25° ensemble), `aifs-ens`, `aifs-single` (dynamical.org), and `hres` (deterministic, ECMWF Open Data, then the AWS mirror). One init or a range of inits → Zarr. `s2s` inits before 2026 come from the ECMWF reforecast (10 members, 1996–2025). |
+| `gfs-fetch` | NOAA GFS and GEFS from dynamical.org, `--product gefs` (default, 31 members, 35 days), `gfs`, `gfs-analysis`, `gefs-analysis` → Zarr. GEFS inits before 2020-10 come from the GEFSv12 reforecast (11 members, daily, 1998–2019). No credentials. |
+| `icon-eu-fetch` | DWD ICON-EU 5-day forecast over Europe from dynamical.org → Zarr. No credentials. |
+| `mrms-fetch` | NOAA MRMS hourly CONUS precipitation analysis from dynamical.org → Zarr. No credentials. |
+| `chirps-fetch` | CHIRPS daily rainfall: dynamical.org final + preliminary → `precip` Zarr. No credentials. |
+| `imerg-fetch` | NASA IMERG precip: `--version early`/`late` half-hourly from dynamical.org (no login; Late falls back to the GES DISC daily files), `final` daily from GES DISC (Earthdata login) → `precip` Zarr. |
+| `clim-fetch` | Climatology (mean + std) for a `--dataset` (`imerg_final`, `era5`, `chirps`, `ecmwf_ifs`, `oisst`, …), at a selected `--prediction-timedelta` lead and `--window` (days; correctly rolled up, centered, with circular padding if not pre-mirrored), expanded to a `--start-time`/`--end-time` window → Zarr. OISST SST is `--dataset oisst --variable sst`. |
+| `tahmo-fetch` | TAHMO station observations (daily-aggregated) → Zarr |
+| `3dpaws-fetch` | 3D-PAWS station observations from a CHORDS portal (default: FEWS NET Kenya; daily precip, temperature, humidity, pressure, wind) → station Zarr. Requires credentials. |
+| `cumulus-fetch` | Cumulus AI operational ensemble precip (Aurora S2S run) — 30 members, 46 daily leads, 0.25° or 1° global (`--dataset precip`, `precip_1deg`, `precip_era5`), one init or a range of inits → Zarr. Inits before the live record come from the 1° Aurora hindcast (1996–2024). Requires credentials. |
+| `neuralgcm-fetch` | NeuralGCM S2S ensemble (IMERG precip `precip`, ERA5 surface `t2m`/`d2m`) — up to 50 members, 6-hour leads to 60 days, ~2.8°, one init or a range of inits → Zarr. Requires credentials. |
+| `weathernext-fetch` | Google WeatherNext 2 ensemble (2025 on; 64 members, 6-hour leads to 15 days, 0.25°, 13 pressure levels) or WeatherNext 3 (2026 on; 64-member ensemble, requester pays, or free ensemble mean/percentiles; hourly leads to 15 days, 0.1°) → Zarr. One init or a range of inits. WeatherNext 2 surface fields (precip, t2m, sst, msl, winds) come from dynamical.org with no credentials; other WeatherNext 2 fields, WeatherNext 3 and the fallback read GCS with Google credentials. Pass `-v` and `--member` or `--statistic` (full cubes are ~1 TB). |
+| `windborne-fetch` | WindBorne data, one `--product` per call: WeatherMesh-6 ensemble grids (live or archived runs from mid-2026; 128 members as mean, std or all; 3-hour leads to 15 days, 0.25°), point forecasts with spread, percentiles and rain-exceedance probabilities, vertical soundings, plain-language site summaries, ERA5 1991–2020 hourly normals at points, the recent ECMWF IFS analysis, or US state heating/cooling degree days → Zarr. Requires credentials. |
+| `pbc-fetch` | PBC / StillLearning AI Weather Quest precip **quintile probabilities** (`era5-p_pr_19` week 3, `era5-p_pr_26` week 4), 1.5° global, one init or a range of inits → Zarr. Requires credentials. |
+| `arco-era5-fetch` | ERA5 hourly reanalysis (ARCO-ERA5) → Zarr. No credentials. |
+| `cmip6-fetch` | One CMIP6 model run (historical 1850–2014 or `ssp*` to 2100) → Zarr. No credentials. |
+| `rfe-fetch` | NOAA CPC African Rainfall Estimate (RFE2) — daily, 0.1° over Africa, from 2001 → Zarr. No credentials. |
+| `gsmap-fetch` | JAXA GSMaP v6 gauge-corrected hourly 0.1° precip (from April 2025, 60°N–60°S) → Zarr. No credentials. |
+| `oisst-fetch` | NOAA OISST v2.1 daily 0.25° sea-surface temperature (1981-09 on) → Zarr. No credentials. |
+| `smap-fetch` | NASA SMAP Enhanced L3 (`SPL3SMP_E`) daily 9 km surface soil moisture → Zarr. Requires credentials. |
+| `ghcn-daily-fetch` | NOAA GHCN-Daily station observations (daily precip and max/min/mean temperature, ~130,000 stations) → station Zarr. No credentials. |
+| `openaq-fetch` | OpenAQ air-quality station observations (daily mean PM2.5, PM10, NO2, O3, SO2, CO) → station Zarr. Requires credentials. |
+| `cams-fetch` | CAMS global air-quality fields (PM2.5, PM10, near-surface NO2/O3/SO2/CO, AOD, total columns) — 5-day forecast at 0.4° (2015 on) or EAC4 reanalysis at 0.75° (2003 on) → Zarr. Requires credentials. |
+| `meteosat-fetch` | Meteosat FCI or SEVIRI satellite imagery (0° or Indian Ocean) at chosen times — visible reflectance and infrared brightness temperature on a regular lat/lon grid at native sampling → Zarr. Up to 12 scans per call by default, since each is a ~200 MB whole-disk download. Requires credentials. |
 ### Generic middle (operate on any standard dataset)
 | Skill | What it does |
 |---|---|
@@ -48,7 +72,7 @@ Built as [Agent Skills](https://agentskills.io).
 | `difference` | Subtract one dataset from another (A − B) with inner-join alignment and broadcasting — anomalies vs a baseline, scenario-minus-historical change maps |
 | `climatology` | Daily climatology (mean, std, count per calendar day across years) computed from a multi-year daily Zarr, optional `--window` day pooling, laid onto a `--start-time`/`--end-time` window in `clim-fetch`'s layout — for a known base period or anything `clim-fetch` doesn't mirror |
 | `standardize-anomaly` | Standardized anomaly aka z-score: `(field − clim_avg) / clim_std` against a climatology (e.g. `clim-fetch`) — dimensionless output, errors on units mismatch. For a plain physical-unit anomaly, use `difference` instead. |
-| `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `dynamical-fetch` (46-day `pressure_level` group) with `q` and `u` |
+| `zonal-moisture-transport` | Eastward moisture flux `q·u`, default column-integrated to IVT (`viwve`, kg m-1 s-1). Compose after `ecmwf-fetch` (46-day pressure levels) with `q` and `u` |
 | `wind-speed-direction` | Wind speed (`hypot(u, v)`) and the directions the wind blows from and to (degrees clockwise from north) from a `--u` / `--v` component pair; calm cells (speed ≤ `--calm-speed`) get NaN direction |
 | `verify` | Forecast verification for every lead: pairs forecast and obs (optional `--filter` masks), pools the samples into one score or keeps dims (`--keep`) or `--by` labels, optionally `--lat-weighted`, and writes RMSE, correlation, ACC, POD/FAR/ETS, Heidke, BSS, RPSS, spread, reliability and ROC, with the sample count behind each value. |
 | `correlate` | Pearson or Spearman correlation of two datasets along a dim (default `time`), cell by cell, with p-value and pair count — forecast–obs anomaly correlation, or a climate index against a grid |
