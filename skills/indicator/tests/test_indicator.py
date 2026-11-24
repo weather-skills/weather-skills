@@ -648,3 +648,14 @@ def test_static_variable_next_to_daily_series(tmp_path, indicator_fn):
             "land_sea_mask sum 2d >= 1 and precip >= 1",
         )
     assert exc.value.code == 2
+
+
+def test_hourly_plain_comparison_with_detect_any(tmp_path, indicator_fn):
+    ds = make_gridded(n_time=6, lats=(1.0,), lons=(10.0,), name="t2m", fill=20.0)
+    ds = ds.assign_coords(time=ds.time[0].values + np.arange(6) * np.timedelta64(1, "h"))
+    ds["t2m"].attrs = {"units": "degree_Celsius", "standard_name": "air_temperature"}
+    ds["t2m"][3] = 36.0
+    src = write_zarr(ds, tmp_path / "hourly.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "t2m > 35", "--detect", "any")
+    assert float(_cell(out)) == 1.0

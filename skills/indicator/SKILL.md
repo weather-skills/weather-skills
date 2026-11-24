@@ -32,7 +32,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - Aliases: `icpac-onset` = `precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d`; `chc-onset` = `precip sum 10d > 25 and precip sum 20d > 20 after 10d`.
 
 ### Arguments
-- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works when `data_interval` is stamped. A rule of only plain comparisons (`VAR OP THR`, no `after`/`within`) on non-precipitation variables needs no time axis or step, so it also runs on a static field such as a land-sea fraction.
+- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works when `data_interval` is stamped. Only windows, `after`/`within` and precipitation need daily or weekly steps: plain comparisons (`VAR OP THR`) on other variables run at any step (e.g. hourly, also with `--detect` or `--cumulative`), and with no time axis at all on a static field such as a land-sea fraction.
 - `--output`, `-o` — output Zarr.
 - `--rule` — alias or clause string. Required.
 - `--variable`, `-v` — use this variable in every clause instead of the one written in the rule.

@@ -561,16 +561,16 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
     ds = to_standard_units(ds, variables=names)
     precip = [n for n in names if kind_from_units(variable_units(ds[n]) or "") == "precip"]
     plain = all(c.agg == "value" and c.after is None and c.within is None for c in spec.clauses)
-    if plain and not precip and not (detect or cumulative or time_dim):
-        # Comparing each value alone needs no time axis or step: works on static fields.
-        dim, step_days, scalar_axis = None, 1, False
-    else:
-        dim = _axis(ds, time_dim)
-        # One selected step or date (e.g. week 2 only): evaluate it as a length-1 axis.
-        scalar_axis = dim not in ds.dims
-        if scalar_axis:
-            ds = ds.expand_dims(dim)
-        step_days = _step_days(ds, dim)
+    # Windows, after/within and precip totals need a whole-day step; --detect and
+    # --cumulative need only an axis; plain comparisons alone need neither.
+    needs_step = bool(precip) or not plain
+    needs_axis = needs_step or bool(detect or cumulative or time_dim)
+    dim = _axis(ds, time_dim) if needs_axis else None
+    # One selected step or date (e.g. week 2 only): evaluate it as a length-1 axis.
+    scalar_axis = dim is not None and dim not in ds.dims
+    if scalar_axis:
+        ds = ds.expand_dims(dim)
+    step_days = _step_days(ds, dim) if needs_step else 1
     for name in precip:
         ds[name] = rate_to_total(ds[name], f"{step_days} day").pint.dequantify()
     mask = evaluate_spec(ds, spec, dim, variable, step_days)
