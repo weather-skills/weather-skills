@@ -1124,3 +1124,10 @@ def test_day_start_hour_exits_2_on_daily_input(tmp_path, aggregate):
         run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"),
                   "--period", "weekly", "--day-start-hour", "6")  # fmt: skip
     assert exc.value.code == 2
+
+
+def test_day_start_hour_note_names_the_shifted_end_time(tmp_path, aggregate, capsys):
+    src = write_zarr(_five_minute_station(), tmp_path / "in.zarr")
+    run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--period", "daily",
+              "--day-start-hour", "6", "--end-time", "2026-11-19")  # fmt: skip
+    assert "at or after --end-time 2026-11-19 06:00:00 " in capsys.readouterr().err

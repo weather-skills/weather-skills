@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py *)
 metadata:
-  version: "0.0.15"
+  version: "0.0.16"
   catalog-group: transforms
 ---
 

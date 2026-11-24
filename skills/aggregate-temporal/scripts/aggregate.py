@@ -28,7 +28,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.15"
+_SKILL_VERSION = "0.0.16"
 
 # Named --period / --window → (aggregation_period stamped, resample freq, length in days).
 NAMED_PERIODS = {
@@ -395,11 +395,14 @@ def aggregate(
         if raw.size == 0:
             raise UsageError(f"no {key} bins contained samples on {dim}")
         later = 0
+        cutoff = end_time
         if raw.dtype.kind == "M":
-            later = int((raw >= np.datetime64(end_time, "ns") + (shift_day or 0)).sum())
+            cutoff = pd.Timestamp(end_time) + (shift_day or pd.Timedelta(0))
+            later = int((raw >= cutoff.to_datetime64()).sum())
         if later:
             print(
-                f"Note: {later} sample(s) at or after --end-time {end_time} are not aggregated "
+                f"Note: {later} sample(s) at or after --end-time {cutoff if shift_day else end_time} "
+                "are not aggregated "
                 "(--end-time is exclusive: pass the day after the last day to include).",
                 file=sys.stderr,
             )
