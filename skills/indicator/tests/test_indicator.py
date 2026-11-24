@@ -614,3 +614,37 @@ def test_single_selected_week_needs_data_interval(tmp_path, indicator_fn, capsys
         run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--rule", "tp > 25")
     assert exc.value.code == 2
     assert "data_interval" in capsys.readouterr().err
+
+
+def test_static_field_plain_comparison(tmp_path, indicator_fn):
+    lsm = xr.Dataset(
+        {"land_sea_mask": (("latitude", "longitude"), [[0.2, 0.7]], {"units": "1"})},
+        coords={"latitude": [1.0], "longitude": [10.0, 11.0]},
+    )
+    src = write_zarr(lsm, tmp_path / "lsm.zarr")
+    out = tmp_path / "land.zarr"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "land_sea_mask >= 0.5")
+    mask = xr.open_zarr(out, consolidated=True)["indicator"]
+    assert mask.dims == ("latitude", "longitude")
+    np.testing.assert_array_equal(mask.values, [[0.0, 1.0]])
+
+
+def test_static_variable_next_to_daily_series(tmp_path, indicator_fn):
+    ds = _daily(3, fill=2.0)
+    ds["land_sea_mask"] = (("latitude", "longitude"), [[0.9]], {"units": "1"})
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    rule = "land_sea_mask >= 0.5 and precip >= 1"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", rule, "--time-dim", "time")
+    np.testing.assert_array_equal(_cell(out).values, [1.0, 1.0, 1.0])
+    with pytest.raises(SystemExit) as exc:
+        run_skill(
+            indicator_fn,
+            "-i",
+            str(src),
+            "-o",
+            str(tmp_path / "bad.zarr"),
+            "--rule",
+            "land_sea_mask sum 2d >= 1 and precip >= 1",
+        )
+    assert exc.value.code == 2

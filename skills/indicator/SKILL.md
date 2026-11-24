@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py *)
 metadata:
-  version: "0.0.9"
+  version: "0.0.10"
   catalog-group: transforms
 ---
 
@@ -32,7 +32,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - Aliases: `icpac-onset` = `precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d`; `chc-onset` = `precip sum 10d > 25 and precip sum 20d > 20 after 10d`.
 
 ### Arguments
-- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works when `data_interval` is stamped.
+- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works when `data_interval` is stamped. A rule of only plain comparisons (`VAR OP THR`, no `after`/`within`) on non-precipitation variables needs no time axis or step, so it also runs on a static field such as a land-sea fraction.
 - `--output`, `-o` — output Zarr.
 - `--rule` — alias or clause string. Required.
 - `--variable`, `-v` — use this variable in every clause instead of the one written in the rule.
@@ -51,6 +51,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 ### Notes
 - Thresholds are in mm per step for precipitation (rates are multiplied by the step, so weekly data is mm per week; amounts in mm are used as stored) and in °C for air temperature. Other variables are compared as stored.
 - Evaluate on individual members, not an ensemble mean. Windows must be whole steps (`1w`, not `10d`, on weekly data).
+- A variable without the time axis (a static field next to a daily series) takes only plain comparisons; it holds for every date.
 - A missing value makes every window that covers it NaN. `--detect first` gives no date when the rule is never true or when a gap comes before the first true day. `--detect any` is NaN when a gap could hide the event. `--probability` is NaN where any member is NaN.
 - The last dates of the input cannot be decided (27 days for `icpac-onset`). stderr prints the last decidable date; NaN after it means "not yet known".
 - `--detect` cannot be combined with `--cumulative`, and `--detect first` cannot be combined with `--probability`.
@@ -71,3 +72,5 @@ Writes, for each lead day of the 2026-10-12 forecast over Kenya, the fraction of
 | P(event happens at least once) | `--detect any --probability` |
 
 `indicator_doy` wraps at 1 January, so a mean across members whose onsets straddle the year end is wrong. `and` / `or` stay decided when one side alone decides them (a false side makes `and` false even if the other is NaN). For calendar onset dates from a forecast, convert `step` to valid `time` first.
+
+Land mask from a static land-sea fraction (e.g. ERA5 `land_sea_mask`, fetched for one day): keep one time with `select --dim time --index 0`, remove that time with `drop --name time`, then `indicator --rule 'land_sea_mask >= 0.5'`. The output has no time axis, so `verify --filter land.zarr` applies it to every date and lead. Put it on the scoring grid first (`coarsen` or `downscale`) if the grids differ.

@@ -25,7 +25,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 
 # --- --rule parsing ---------------------------------------------------------
@@ -351,6 +351,13 @@ def _steps(days: int, step_days: int) -> int:
 
 def _evaluate_clause(da: xr.DataArray, clause, dim: str, step_days: int) -> xr.DataArray:
     da = _strip_pint(da)
+    plain = clause.agg == "value" and clause.after is None and clause.within is None
+    if dim not in da.dims and not plain:
+        raise UsageError(
+            f"{da.name!r} has no {dim!r} axis (dims {list(da.dims)}), so a window, 'after' or "
+            f"'within' cannot run along it. A static field (e.g. a land-sea fraction) takes only "
+            f"a plain comparison such as '{da.name} >= 0.5', which holds for every {dim}."
+        )
     window = 1 if clause.agg == "value" else _steps(clause.window, step_days)
     core = _core_mask(da, clause, dim, window)
     if clause.after is not None:
@@ -394,9 +401,9 @@ def _left_roll(da: xr.DataArray, dim: str, window: int, method: str) -> xr.DataA
     """Trailing rolling window, then shift labels to the left edge (forward window)."""
     if window < 1:
         raise UsageError(f"rolling window must be >= 1; got {window}")
-    axis = da[dim]
     if window == 1:
         return da
+    axis = da[dim]
     rolled = da.rolling({dim: window}, min_periods=window, center=False)
     if method == "sum":
         out = rolled.sum(skipna=False)
@@ -548,19 +555,24 @@ def _step_days(ds, dim: str) -> int:
 def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **kwargs):
     """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
     spec = parse_rule(rule)
-    dim = _axis(ds, time_dim)
-    # One selected step or date (e.g. week 2 only): evaluate it as a length-1 axis.
-    scalar_axis = dim not in ds.dims
-    if scalar_axis:
-        ds = ds.expand_dims(dim)
-    step_days = _step_days(ds, dim)
     # Thresholds are in standard units: air temperature in degree_Celsius, precip
     # in mm per step (a rate in any units times the step; daily mm day-1 is unchanged).
     names = sorted({variable or c.variable for c in spec.clauses} & set(ds.data_vars))
     ds = to_standard_units(ds, variables=names)
-    for name in names:
-        if kind_from_units(variable_units(ds[name]) or "") == "precip":
-            ds[name] = rate_to_total(ds[name], f"{step_days} day").pint.dequantify()
+    precip = [n for n in names if kind_from_units(variable_units(ds[n]) or "") == "precip"]
+    plain = all(c.agg == "value" and c.after is None and c.within is None for c in spec.clauses)
+    if plain and not precip and not (detect or cumulative or time_dim):
+        # Comparing each value alone needs no time axis or step: works on static fields.
+        dim, step_days, scalar_axis = None, 1, False
+    else:
+        dim = _axis(ds, time_dim)
+        # One selected step or date (e.g. week 2 only): evaluate it as a length-1 axis.
+        scalar_axis = dim not in ds.dims
+        if scalar_axis:
+            ds = ds.expand_dims(dim)
+        step_days = _step_days(ds, dim)
+    for name in precip:
+        ds[name] = rate_to_total(ds[name], f"{step_days} day").pint.dequantify()
     mask = evaluate_spec(ds, spec, dim, variable, step_days)
     out = apply_reductions(
         mask, dim, cumulative=bool(cumulative), detect=detect, probability=bool(probability)
