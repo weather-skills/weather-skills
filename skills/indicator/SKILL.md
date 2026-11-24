@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py *)
 metadata:
-  version: "0.0.10"
+  version: "0.0.11"
   catalog-group: transforms
 ---
 
@@ -16,7 +16,7 @@ Writes a 0/1 mask from a `--rule`, evaluated on each date of a series (or once o
 ## Usage
 
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RULE [-v NAME] [--time-dim DIM] [--detect first|any] [--cumulative] [--probability]
+uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RULE [-v NAME] [--time-dim DIM] [--detect first|any] [--cumulative] [--first-within WINDOW] [--probability]
 ```
 
 `RULE` is an alias or clauses joined by all `and` or all `or`:
@@ -33,13 +33,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - Aliases: `icpac-onset` = `precip sum 3d >= 20mm and not precip consecutive-below 1mm 7d within 21d`; `chc-onset` = `precip sum 10d > 25mm and precip sum 20d > 20mm after 10d`. Both need daily precipitation totals in mm.
 
 ### Arguments
-- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works; a window on it needs `data_interval` stamped. Only windows and `after`/`within` need daily or weekly steps: plain comparisons (`VAR OP THR`) run at any step (e.g. hourly, also with `--detect` or `--cumulative`), and with no time axis at all on a static field such as a land-sea fraction.
+- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works; a window on it needs `data_interval` stamped. Only windows, `after`/`within` and `--first-within` need daily or weekly steps: plain comparisons (`VAR OP THR`) run at any step (e.g. hourly, also with `--detect` or `--cumulative`), and with no time axis at all on a static field such as a land-sea fraction.
 - `--output`, `-o` — output Zarr.
 - `--rule` — alias or clause string. Required.
 - `--variable`, `-v` — use this variable in every clause instead of the one written in the rule.
 - `--time-dim` — axis to evaluate along. Default: `time` if it has more than one value, else `step`.
 - `--detect` — collapse the axis: `first` (date of the first true day) or `any` (true at least once).
 - `--cumulative` — once true, stay true.
+- `--first-within WINDOW` — window such as `7d` or `1w`. Marks the first true day of the input and the `WINDOW − 1` dates before it as 1, earlier dates as 0, and later dates as NaN: each date answers "does the first event fall within WINDOW from here?". Combines with none of the other reductions.
 - `--probability` — fraction of ensemble members (`number`) where true; unchanged if there is no `number`.
 
 ### Output
@@ -47,6 +48,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - `--detect first`: `indicator_time` (first true date or step) and, on a datetime axis, `indicator_doy` (day of year).
 - `--detect any`: `indicator` without the time axis.
 - `--probability`: `probability` (0–1, `units: 1`).
+- `--first-within`: `indicator` is a buffer of 1s ending on the first true day. With `--first-within 3d` and the first true day on day 6: days 1–3 are 0, days 4–6 are 1, day 7 onward is NaN. A gap before the first true day makes dates whose window reaches it NaN, and every date after it, since the event could be hidden in it; a window holding both the gap and the first true day is 1. A window running past the end of the data is 1 if the first true day is in it, else NaN. `aggregation_period` is the window.
 - Each variable has `long_name` and `indicator_spec` (parsed rule as JSON); the store has `indicator_rule` and `indicator_expanded`.
 
 ### Notes
@@ -56,6 +58,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - A missing value makes every window that covers it NaN. `--detect first` gives no date when the rule is never true or when a gap comes before the first true day. `--detect any` is NaN when a gap could hide the event. `--probability` is NaN where any member is NaN.
 - The last dates of the input cannot be decided (27 days for `icpac-onset`). stderr prints the last decidable date; NaN after it means "not yet known".
 - `--detect` cannot be combined with `--cumulative`, and `--detect first` cannot be combined with `--probability`.
+- `--first-within` counts from the first date of the input, so start the input at the season start: an event before it is not seen.
 
 ### Example
 ```bash
@@ -71,6 +74,7 @@ Writes, for each lead day of the 2026-10-12 forecast over Kenya (daily totals in
 | Onset date per member | `--detect first` |
 | P(onset has happened by each date) | `--cumulative --probability` |
 | P(event happens at least once) | `--detect any --probability` |
+| Observed onset within the week from each date, post-onset dates left out | `--first-within 7d` |
 
 `indicator_doy` wraps at 1 January, so a mean across members whose onsets straddle the year end is wrong. `and` / `or` stay decided when one side alone decides them (a false side makes `and` false even if the other is NaN). For calendar onset dates from a forecast, convert `step` to valid `time` first.
 
