@@ -484,8 +484,8 @@ def _probability(mask: xr.DataArray) -> xr.DataArray:
     return mask.mean("number", skipna=False).astype("float32")
 
 
-def _axis(ds, time_dim: str | None) -> str:
-    """Axis to evaluate along: a dim, or a scalar coord left by selecting one step or date."""
+def _axis(ds, time_dim: str | None) -> str | None:
+    """Axis to evaluate along: a dim, a scalar coord left by selecting one step or date, or None."""
     if time_dim:
         if time_dim not in ds.dims and not (time_dim in ds.coords and ds[time_dim].ndim == 0):
             raise UsageError(f"--time-dim {time_dim!r} not in dataset dims {list(ds.dims)}")
@@ -499,10 +499,7 @@ def _axis(ds, time_dim: str | None) -> str:
     for name in ("step", "time"):
         if name in ds.coords and ds[name].ndim == 0:
             return name
-    raise UsageError(
-        "could not identify a daily time or step dim; pass --time-dim. "
-        f"Available dims: {list(ds.dims)}"
-    )
+    return None
 
 
 def _step_days(ds, dim: str) -> int:
@@ -563,11 +560,16 @@ def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **k
     ds = to_standard_units(ds, variables=names)
     precip = [n for n in names if kind_from_units(variable_units(ds[n]) or "") == "precip"]
     plain = all(c.agg == "value" and c.after is None and c.within is None for c in spec.clauses)
-    # Windows, after/within and precip totals need a whole-day step; --detect and
-    # --cumulative need only an axis; plain comparisons alone need neither.
+    # Windows, after/within, --detect and --cumulative run along a time axis.
+    # Windows and precip totals need a whole-day step, which a field with no
+    # time axis takes from data_interval. Plain comparisons alone need neither.
+    dim = _axis(ds, time_dim)
+    if dim is None and (not plain or detect or cumulative):
+        raise UsageError(
+            "could not identify a daily time or step dim; pass --time-dim. "
+            f"Available dims: {list(ds.dims)}"
+        )
     needs_step = bool(precip) or not plain
-    needs_axis = needs_step or bool(detect or cumulative or time_dim)
-    dim = _axis(ds, time_dim) if needs_axis else None
     # One selected step or date (e.g. week 2 only): evaluate it as a length-1 axis.
     scalar_axis = dim is not None and dim not in ds.dims
     if scalar_axis:

@@ -660,3 +660,17 @@ def test_hourly_plain_comparison_with_detect_any(tmp_path, indicator_fn):
     out = tmp_path / "out.zarr"
     run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "t2m > 35", "--detect", "any")
     assert float(_cell(out)) == 1.0
+
+
+def test_static_precip_takes_step_from_data_interval(tmp_path, indicator_fn):
+    pr = xr.Dataset(
+        {"precip": (("latitude", "longitude"), [[1.0, 2.0]], {"units": "mm day-1"})},
+        coords={"latitude": [1.0], "longitude": [10.0, 11.0]},
+    )
+    pr["precip"].attrs[DATA_INTERVAL_ATTR] = "7 day"
+    src = write_zarr(pr, tmp_path / "pr.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip > 10")
+    np.testing.assert_array_equal(
+        xr.open_zarr(out, consolidated=True)["indicator"].values, [[0.0, 1.0]]
+    )
