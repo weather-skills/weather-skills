@@ -12,10 +12,11 @@ from weather_skills_core.standard_dataset import ALIASES, names_for
 from weather_skills_core.units import AGGREGATION_COVERAGE_COORD as COVERAGE
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.13"
+_SKILL_VERSION = "0.0.14"
 
 
 def _coerce(values):
+    """Turn --coords strings into int, float or datetime64 values; keep the rest as strings."""
     out = []
     for v in values:
         try:
@@ -35,11 +36,34 @@ def _coerce(values):
     name="concat",
     version=_SKILL_VERSION,
 )
-@weather_skill.argument("-i", "--input", type=Dataset("any"), action="append", required=True)
-@weather_skill.argument("--dim", required=True)
-@weather_skill.argument("--coords", help="Comma-separated coord values for the new dim")
+@weather_skill.argument(
+    "-i",
+    "--input",
+    type=Dataset("any"),
+    action="append",
+    required=True,
+    help="Input Zarr; repeat once per input (at least two), in output order",
+)
+@weather_skill.argument(
+    "--dim",
+    required=True,
+    help="Dim to join along: an existing dim on every input, or a new dim on none",
+)
+@weather_skill.argument(
+    "--coords",
+    help="Comma-separated labels for a new --dim, one per input (e.g. ecmwf,gefs); "
+    "numbers and dates are parsed as such",
+)
 def concat(ds, dim, coords, **kwargs):
-    """Join two or more Zarrs into one along a named dimension."""
+    """Join two or more Zarrs into one along a named dimension.
+
+    If every input has --dim, its values are joined end to end (consecutive
+    time windows, ensemble halves, adjacent lat/lon boxes); time axes come out
+    sorted forward. If no input has --dim, it becomes a new dim with one entry
+    per input, labelled by --coords. The inputs must otherwise match: same
+    variables, data_interval, aggregation_period, calendar, and every other
+    coordinate. concat stops with an error rather than pad a mismatch with NaN.
+    """
     import pint
     import xarray as xr
 
@@ -76,10 +100,17 @@ def concat(ds, dim, coords, **kwargs):
         )
 
     # Mixing e.g. daily and weekly values on one axis would keep only the
-    # first input's label, so refuse instead.
+    # first input's label, so refuse instead. A variable with no
+    # aggregation_period was never aggregated, so each value covers its
+    # data_interval: compare that instead, so obs aggregated to "1 day"
+    # match a forecast that is natively daily.
     for key in ("data_interval", "aggregation_period"):
         for name in dss[0].data_vars:
-            seen = {str(item[name].attrs.get(key)) for item in dss if name in item.data_vars}
+            seen = {
+                str(item[name].attrs.get(key, item[name].attrs.get("data_interval")))
+                for item in dss
+                if name in item.data_vars
+            }
             if len(seen) > 1:
                 raise UsageError(f"{name!r} has different {key} across inputs: {sorted(seen)}")
 
