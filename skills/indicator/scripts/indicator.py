@@ -17,22 +17,21 @@ from weather_skills_core import Dataset, UsageError, weather_skill
 from weather_skills_core.units import (
     data_interval_of,
     infer_timestep,
-    kind_from_units,
     parse_aggregation_period,
-    rate_to_total,
-    to_standard_units,
+    units_equal,
+    ureg,
     variable_units,
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.9"
+_SKILL_VERSION = "0.0.10"
 
 
 # --- --rule parsing ---------------------------------------------------------
 
 ALIASES = {
-    "icpac-onset": ("precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d"),
-    "chc-onset": "precip sum 10d > 25 and precip sum 20d > 20 after 10d",
+    "icpac-onset": "precip sum 3d >= 20mm and not precip consecutive-below 1mm 7d within 21d",
+    "chc-onset": "precip sum 10d > 25mm and precip sum 20d > 20mm after 10d",
 }
 
 _AGGS = (
@@ -48,13 +47,14 @@ _COUNT_OR_CONSEC = frozenset(
 )
 _CONSEC = frozenset({"consecutive-above", "consecutive-below"})
 _EXAMPLES = (
-    "Examples: 'precip > 25' (each step's own value), 'precip sum 8d >= 25', "
-    "'precip count-above 1 10d >= 5', 'precip consecutive-below 1 7d' (7 dry days in a row), "
-    "'precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d' (onset with no "
-    "false start)."
+    "Examples: 't2m > 35degC' (each step's own value), 'precip sum 8d >= 25mm', "
+    "'precip count-above 1mm 10d >= 5', 'precip consecutive-below 1mm 7d' (7 dry days in a "
+    "row), 'precip sum 3d >= 20mm and not precip consecutive-below 1mm 7d within 21d' (onset "
+    "with no false start), 'land_sea_mask >= 0.5' (no units on a unitless field)."
 )
 _WINDOW_RE = re.compile(r"^(\d+)([dw])$", re.IGNORECASE)
 _SPLIT_RE = re.compile(r"\s+(and|or)\s+", re.IGNORECASE)
+_NUMBER_RE = re.compile(r"^([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)(\S*)$")
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,7 @@ class Clause:
     op: str | None
     threshold: float | None
     daily_threshold: float | None
+    units: str | None  # units of the threshold compared against the data
     after: int | None
     within: int | None
 
@@ -126,6 +127,25 @@ def _parse_op(token: str, source: str) -> str:
     return token
 
 
+def _parse_quantity(token: str, source: str, what: str) -> tuple[float, str | None]:
+    """Split '20mm' or '0.5' into a number and its units (None when none are written)."""
+    match = _NUMBER_RE.fullmatch(token)
+    if not match:
+        raise UsageError(
+            f"{what} {token!r} in --rule {source!r} must be a number with optional units "
+            "written without spaces, e.g. '20mm', '5mm/day', '35degC' or '0.5'"
+        )
+    units = match.group(2) or None
+    if units is not None:
+        try:
+            ureg.Unit(units)
+        except Exception as exc:  # noqa: BLE001
+            raise UsageError(
+                f"unknown units {units!r} in {what} {token!r} of --rule {source!r}"
+            ) from exc
+    return float(match.group(1)), units
+
+
 def _parse_clause(text: str, source: str) -> Clause:
     tokens = text.split()
     if not tokens:
@@ -147,12 +167,7 @@ def _parse_clause(text: str, source: str) -> Clause:
         op = _parse_op(tokens[i], source)
         if i + 1 >= len(tokens):
             raise UsageError(f"clause {text!r} in --rule {source!r} is missing a threshold")
-        try:
-            threshold = float(tokens[i + 1])
-        except ValueError as exc:
-            raise UsageError(
-                f"threshold {tokens[i + 1]!r} in --rule {source!r} is not a number"
-            ) from exc
+        threshold, units = _parse_quantity(tokens[i + 1], source, "threshold")
         after, within = _parse_tail(tokens, i + 2, text, source, "value")
         return Clause(
             negate=negate,
@@ -162,6 +177,7 @@ def _parse_clause(text: str, source: str) -> Clause:
             op=op,
             threshold=threshold,
             daily_threshold=None,
+            units=units,
             after=after,
             within=within,
         )
@@ -176,17 +192,13 @@ def _parse_clause(text: str, source: str) -> Clause:
     i += 1
 
     daily_threshold = None
+    units = None
     if agg in _COUNT_OR_CONSEC:
         if i >= len(tokens):
             raise UsageError(
                 f"clause {text!r} in --rule {source!r} needs a daily threshold after {agg}"
             )
-        try:
-            daily_threshold = float(tokens[i])
-        except ValueError as exc:
-            raise UsageError(
-                f"daily threshold {tokens[i]!r} in --rule {source!r} is not a number"
-            ) from exc
+        daily_threshold, units = _parse_quantity(tokens[i], source, "daily threshold")
         i += 1
 
     if i >= len(tokens):
@@ -205,12 +217,14 @@ def _parse_clause(text: str, source: str) -> Clause:
         i += 1
         if i >= len(tokens):
             raise UsageError(f"clause {text!r} in --rule {source!r} is missing a threshold")
-        try:
-            threshold = float(tokens[i])
-        except ValueError as exc:
+        threshold, threshold_units = _parse_quantity(tokens[i], source, "threshold")
+        if agg in _COUNT_OR_CONSEC and threshold_units is not None:
             raise UsageError(
-                f"threshold {tokens[i]!r} in --rule {source!r} is not a number"
-            ) from exc
+                f"threshold {tokens[i]!r} in --rule {source!r} counts steps, so it takes no "
+                f"units; put units on the daily threshold after {agg}"
+            )
+        if agg not in _COUNT_OR_CONSEC:
+            units = threshold_units
         i += 1
 
     after, within = _parse_tail(tokens, i, text, source, agg)
@@ -222,6 +236,7 @@ def _parse_clause(text: str, source: str) -> Clause:
         op=op,
         threshold=threshold,
         daily_threshold=daily_threshold,
+        units=units,
         after=after,
         within=within,
     )
@@ -287,17 +302,25 @@ def evaluate_spec(
     Clause windows are in days; ``step_days`` is the spacing of ``dim``.
     """
     masks = []
+    order = []  # input dims, in an order every variable the rule reads agrees with
     for clause in spec.clauses:
         name = variable_override or clause.variable
         if name not in ds:
             raise UsageError(
                 f"variable {name!r} missing from --input. Available: {list(ds.data_vars)}"
             )
+        _check_units(ds[name], clause.units, source=spec.source)
+        dims = ds[name].dims
+        for i, d in enumerate(dims):
+            if d not in order:
+                later = [order.index(x) for x in dims[i + 1 :] if x in order]
+                order.insert(min(later, default=len(order)), d)
         masks.append(_evaluate_clause(ds[name], clause, dim, step_days))
     out = masks[0]
     combine = spec.combinator or "and"
     for other in masks[1:]:
         out = _combine(out, other, combine)
+    out = out.transpose(*(d for d in order if d in out.dims), ...)
     return out.astype("float32")
 
 
@@ -337,6 +360,41 @@ def apply_reductions(
     return field.to_dataset()
 
 
+def _check_units(da: xr.DataArray, units: str | None, source: str) -> None:
+    """Refuse a threshold whose units differ from the data's; nothing is converted."""
+    data_units = variable_units(da)
+    if data_units is not None:
+        data_units = format(ureg.Unit(data_units), "~C")  # short, and valid in a rule
+    unitless = data_units is None or ureg.Unit(data_units).dimensionless
+    if units is None:
+        if unitless:
+            return
+        raise UsageError(
+            f"{da.name!r} is in {data_units!r}, so its threshold in --rule {source!r} needs "
+            f"units, written after the number without spaces, e.g. "
+            f"'{da.name} > 10{data_units}'"
+        )
+    if data_units is None:
+        raise UsageError(
+            f"{da.name!r} has no units attribute, so its threshold in --rule {source!r} "
+            f"cannot be in {units!r}; drop the units or set the variable's units first"
+        )
+    if units_equal(units, data_units):
+        return
+    extra = (ureg.Unit(units) / ureg.Unit(data_units)).dimensionality
+    if extra == {"[time]": 1}:
+        fix = f"run convert-to-totals first to turn the rate {da.name!r} into amounts"
+    elif extra == {"[time]": -1}:
+        fix = f"write the threshold as an amount, since {da.name!r} holds amounts"
+    else:
+        fix = f"run unit-convert to put {da.name!r} in {units!r} first"
+    raise UsageError(
+        f"{da.name!r} is in {data_units!r} but its threshold in --rule {source!r} is in "
+        f"{units!r}; indicator compares values as stored. Write the threshold in "
+        f"{data_units!r}, or {fix}."
+    )
+
+
 def _strip_pint(da: xr.DataArray) -> xr.DataArray:
     if getattr(getattr(da, "pint", None), "units", None) is not None:
         return da.pint.dequantify()
@@ -351,6 +409,13 @@ def _steps(days: int, step_days: int) -> int:
 
 def _evaluate_clause(da: xr.DataArray, clause, dim: str, step_days: int) -> xr.DataArray:
     da = _strip_pint(da)
+    plain = clause.agg == "value" and clause.after is None and clause.within is None
+    if dim not in da.dims and not plain:
+        raise UsageError(
+            f"{da.name!r} has no {dim!r} axis (dims {list(da.dims)}), so a window, 'after' or "
+            f"'within' cannot run along it. A static field (e.g. a land-sea fraction) takes only "
+            f"a plain comparison such as '{da.name} >= 0.5', which holds for every {dim}."
+        )
     window = 1 if clause.agg == "value" else _steps(clause.window, step_days)
     core = _core_mask(da, clause, dim, window)
     if clause.after is not None:
@@ -394,9 +459,9 @@ def _left_roll(da: xr.DataArray, dim: str, window: int, method: str) -> xr.DataA
     """Trailing rolling window, then shift labels to the left edge (forward window)."""
     if window < 1:
         raise UsageError(f"rolling window must be >= 1; got {window}")
-    axis = da[dim]
     if window == 1:
         return da
+    axis = da[dim]
     rolled = da.rolling({dim: window}, min_periods=window, center=False)
     if method == "sum":
         out = rolled.sum(skipna=False)
@@ -475,8 +540,8 @@ def _probability(mask: xr.DataArray) -> xr.DataArray:
     return mask.mean("number", skipna=False).astype("float32")
 
 
-def _axis(ds, time_dim: str | None) -> str:
-    """Axis to evaluate along: a dim, or a scalar coord left by selecting one step or date."""
+def _axis(ds, time_dim: str | None) -> str | None:
+    """Axis to evaluate along: a dim, a scalar coord left by selecting one step or date, or None."""
     if time_dim:
         if time_dim not in ds.dims and not (time_dim in ds.coords and ds[time_dim].ndim == 0):
             raise UsageError(f"--time-dim {time_dim!r} not in dataset dims {list(ds.dims)}")
@@ -490,10 +555,7 @@ def _axis(ds, time_dim: str | None) -> str:
     for name in ("step", "time"):
         if name in ds.coords and ds[name].ndim == 0:
             return name
-    raise UsageError(
-        "could not identify a daily time or step dim; pass --time-dim. "
-        f"Available dims: {list(ds.dims)}"
-    )
+    return None
 
 
 def _step_days(ds, dim: str) -> int:
@@ -525,7 +587,7 @@ def _step_days(ds, dim: str) -> int:
     required=True,
     help=(
         "Named alias (icpac-onset, chc-onset) or one string of clauses joined by "
-        "and/or, e.g. 'precip sum 8d >= 25'."
+        "and/or, with thresholds in the variable's units, e.g. 'precip sum 8d >= 25mm'."
     ),
 )
 @weather_skill.argument("--variable", "-v", help="Override the variable named in --rule.")
@@ -548,19 +610,20 @@ def _step_days(ds, dim: str) -> int:
 def indicator(ds, rule, variable, time_dim, detect, cumulative, probability, **kwargs):
     """Apply a yes/no weather rule to each day or week of a Zarr, optionally reduced to an onset date or a probability."""
     spec = parse_rule(rule)
+    plain = all(c.agg == "value" and c.after is None and c.within is None for c in spec.clauses)
+    # Windows, after/within, --detect and --cumulative run along a time axis, and
+    # windows need a whole-day step. Plain comparisons alone need neither.
     dim = _axis(ds, time_dim)
+    if dim is None and (not plain or detect or cumulative):
+        raise UsageError(
+            "could not identify a daily time or step dim; pass --time-dim. "
+            f"Available dims: {list(ds.dims)}"
+        )
     # One selected step or date (e.g. week 2 only): evaluate it as a length-1 axis.
-    scalar_axis = dim not in ds.dims
+    scalar_axis = dim is not None and dim not in ds.dims
     if scalar_axis:
         ds = ds.expand_dims(dim)
-    step_days = _step_days(ds, dim)
-    # Thresholds are in standard units: air temperature in degree_Celsius, precip
-    # in mm per step (a rate in any units times the step; daily mm day-1 is unchanged).
-    names = sorted({variable or c.variable for c in spec.clauses} & set(ds.data_vars))
-    ds = to_standard_units(ds, variables=names)
-    for name in names:
-        if kind_from_units(variable_units(ds[name]) or "") == "precip":
-            ds[name] = rate_to_total(ds[name], f"{step_days} day").pint.dequantify()
+    step_days = 1 if plain else _step_days(ds, dim)
     mask = evaluate_spec(ds, spec, dim, variable, step_days)
     out = apply_reductions(
         mask, dim, cumulative=bool(cumulative), detect=detect, probability=bool(probability)

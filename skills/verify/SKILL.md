@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/verify.py *)
 metadata:
-  version: "0.0.12"
+  version: "0.0.13"
   catalog-group: transforms
 ---
 
@@ -114,4 +114,4 @@ The metrics are computed from per-sample statistics, pooled by their mean over e
 The probability, reliability and ROC statistics use the forecast event probability: the share of members ≥ `--threshold`, or the forecast itself with `--probability`.
 
 ### Event filters
-Score only dates an obs condition holds, e.g. 30-day rain totals during droughts: run `indicator` on the obs (`--rule "precip sum 30d < 50"`) for the mask, put both inputs on 30-day totals (`aggregate-temporal --period '30 day'`, then `convert-to-totals`), then `--metric mae --filter drought.zarr`. Several `--filter` masks must all hold. For locally extreme days, take the q90 from `climatology --quantiles 0.9`, `difference` the obs minus it, and mask with `indicator --rule "precip >= 0"`.
+Score only dates an obs condition holds, e.g. 30-day rain totals during droughts: run `indicator` on the obs as daily totals in mm (`--rule "precip sum 30d < 50mm"`) for the mask, put both inputs on 30-day totals (`aggregate-temporal --period '30 day'`, then `convert-to-totals`), then `--metric mae --filter drought.zarr`. Several `--filter` masks must all hold. For locally extreme days, take the q90 from `climatology --quantiles 0.9`, `difference` the obs minus it, and mask with `indicator --rule "precip >= 0mm/day"` (the threshold in the difference's units).
