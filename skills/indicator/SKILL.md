@@ -11,7 +11,7 @@ metadata:
 
 # indicator
 
-Writes a 0/1 mask from a `--rule`, evaluated on each date of a daily or weekly series, then optional reductions.
+Writes a 0/1 mask from a `--rule`, evaluated on each date of a series (or once on a static field), then optional reductions. Thresholds are in the data's own units; nothing is converted.
 
 ## Usage
 
@@ -24,15 +24,16 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 [not] VAR OP THR [after Nd | within Nd]
 [not] VAR AGG [DAILY_THR] WINDOW [OP THR] [after Nd | within Nd]
 ```
-- `VAR OP THR` (e.g. `tp > 25`): each step's own value, so on weekly totals it is the week's total. Same as `VAR sum 1d` on daily data or `VAR sum 1w` on weekly data.
+- `THR` and `DAILY_THR` are in the variable's own units, written right after the number with no spaces: `20mm`, `5mm/day`, `35degC`, or a bare number on a unitless field (`land_sea_mask >= 0.5`). Any spelling of the same units matches (`mm/day` = `mm day-1`). The `THR` after `count-above`/`count-below` is a number of steps and takes no units.
+- `VAR OP THR` (e.g. `tp > 25mm`): each step's own value, so on weekly totals it is the week's total. Same as `VAR sum 1d` on daily data or `VAR sum 1w` on weekly data.
 - `AGG`: `sum`, `mean`, `count-above`, `count-below` (number of steps above/below `DAILY_THR`), `consecutive-above`, `consecutive-below` (every step in the window above/below `DAILY_THR`; no `OP THR`).
 - `WINDOW`: `Nd` or `Nw`, starting on the labelled date and looking forward. `OP`: `>=`, `<=`, `>`, `<`.
 - `after Nd`: evaluate the clause N days later. `within Nd`: true if the clause is true on any of the next N days (days 1 to N after the date). `not` inverts the clause.
-- There is no `then`: a later condition is a clause with `after` or `within`. A false-start check is an onset clause `and not` a dry spell `within` the days that follow, e.g. onset of at least 20 mm in 3 days on at least 2 wet days, with no 7-day dry spell starting in the next 10 days: `precip sum 3d >= 20 and precip count-above 1 3d >= 2 and not precip consecutive-below 1 7d within 10d`. To keep the whole spell inside the next 10 days, use `within 4d` (spells starting on days 1–4).
-- Aliases: `icpac-onset` = `precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d`; `chc-onset` = `precip sum 10d > 25 and precip sum 20d > 20 after 10d`.
+- There is no `then`: a later condition is a clause with `after` or `within`. A false-start check is an onset clause `and not` a dry spell `within` the days that follow, e.g. onset of at least 20 mm in 3 days on at least 2 wet days, with no 7-day dry spell starting in the next 10 days: `precip sum 3d >= 20mm and precip count-above 1mm 3d >= 2 and not precip consecutive-below 1mm 7d within 10d`. To keep the whole spell inside the next 10 days, use `within 4d` (spells starting on days 1–4).
+- Aliases: `icpac-onset` = `precip sum 3d >= 20mm and not precip consecutive-below 1mm 7d within 21d`; `chc-onset` = `precip sum 10d > 25mm and precip sum 20d > 20mm after 10d`. Both need daily precipitation totals in mm.
 
 ### Arguments
-- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works when `data_interval` is stamped. Only windows, `after`/`within` and precipitation need daily or weekly steps: plain comparisons (`VAR OP THR`) on other variables run at any step (e.g. hourly, also with `--detect` or `--cumulative`), and with no time axis at all on a static field such as a land-sea fraction. A static precipitation field takes its step from `data_interval`.
+- `--input`, `-i` — daily or weekly Zarr on `time` or `step`. A single selected step or date (a scalar `step` or `time`, e.g. week 2 only) works; a window on it needs `data_interval` stamped. Only windows and `after`/`within` need daily or weekly steps: plain comparisons (`VAR OP THR`) run at any step (e.g. hourly, also with `--detect` or `--cumulative`), and with no time axis at all on a static field such as a land-sea fraction.
 - `--output`, `-o` — output Zarr.
 - `--rule` — alias or clause string. Required.
 - `--variable`, `-v` — use this variable in every clause instead of the one written in the rule.
@@ -49,7 +50,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 - Each variable has `long_name` and `indicator_spec` (parsed rule as JSON); the store has `indicator_rule` and `indicator_expanded`.
 
 ### Notes
-- Thresholds are in mm per step for precipitation (rates are multiplied by the step, so weekly data is mm per week; amounts in mm are used as stored) and in °C for air temperature. Other variables are compared as stored.
+- Values are compared as stored; nothing is converted. A threshold in other units, or a bare number on a variable with units, exits 2. Convert the data first: `unit-convert` for other units of the same quantity (e.g. K to degC), `convert-to-totals` for rates to amounts. Daily rates from a fetcher need `aggregate-temporal --period daily` before `convert-to-totals`.
 - Evaluate on individual members, not an ensemble mean. Windows must be whole steps (`1w`, not `10d`, on weekly data).
 - A variable without the time axis (a static field next to a daily series) takes only plain comparisons; it holds for every date.
 - A missing value makes every window that covers it NaN. `--detect first` gives no date when the rule is never true or when a gap comes before the first true day. `--detect any` is NaN when a gap could hide the event. `--probability` is NaN where any member is NaN.
@@ -58,9 +59,9 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 
 ### Example
 ```bash
-uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i ecmwf_s2s_kenya_daily.zarr -o onset_p.zarr --rule icpac-onset --cumulative --probability
+uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i ecmwf_s2s_kenya_daily_mm.zarr -o onset_p.zarr --rule icpac-onset --cumulative --probability
 ```
-Writes, for each lead day of the 2026-10-12 forecast over Kenya, the fraction of members whose ICPAC onset has happened by then.
+Writes, for each lead day of the 2026-10-12 forecast over Kenya (daily totals in mm), the fraction of members whose ICPAC onset has happened by then.
 
 ## Details
 

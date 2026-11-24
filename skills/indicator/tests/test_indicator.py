@@ -20,7 +20,9 @@ def indicator_fn(indicator_mod):
 
 
 def _daily(n_time, fill=0.0, name="precip", start="2026-01-01"):
+    """Daily precipitation totals in mm."""
     ds = make_gridded(n_time=n_time, lats=(1.0,), lons=(10.0,), name=name, fill=fill, start=start)
+    ds[name].attrs.update(units="mm", standard_name="lwe_thickness_of_precipitation_amount")
     ds[name].attrs[DATA_INTERVAL_ATTR] = "1 day"
     return ds
 
@@ -32,22 +34,24 @@ def _cell(ds, name="indicator"):
 def test_parse_alias_matches_expanded(indicator_mod):
     parse_rule = indicator_mod.parse_rule
     alias = parse_rule("icpac-onset")
-    written = parse_rule("precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d")
+    written = parse_rule("precip sum 3d >= 20mm and not precip consecutive-below 1mm 7d within 21d")
     assert alias.clauses == written.clauses
     assert alias.combinator == written.combinator
     chc = parse_rule("chc-onset")
-    chc_w = parse_rule("precip sum 10d > 25 and precip sum 20d > 20 after 10d")
+    chc_w = parse_rule("precip sum 10d > 25mm and precip sum 20d > 20mm after 10d")
     assert chc.clauses == chc_w.clauses
 
 
 def test_parse_rejects_mixed_combinators(indicator_mod):
     with pytest.raises(UsageError, match="mixing"):
-        indicator_mod.parse_rule("precip sum 1d >= 1 and precip sum 1d < 1 or precip sum 1d >= 0")
+        indicator_mod.parse_rule(
+            "precip sum 1d >= 1mm and precip sum 1d < 1mm or precip sum 1d >= 0mm"
+        )
 
 
 def test_parse_rejects_after_and_within(indicator_mod):
     with pytest.raises(UsageError, match="after"):
-        indicator_mod.parse_rule("precip sum 3d >= 20 after 1d within 2d")
+        indicator_mod.parse_rule("precip sum 3d >= 20mm after 1d within 2d")
 
 
 def test_eight_day_sum_left_labeled(tmp_path, indicator_fn):
@@ -55,7 +59,7 @@ def test_eight_day_sum_left_labeled(tmp_path, indicator_fn):
     ds["precip"].values[5:13, 0, 0] = 4.0  # 8 days × 4 mm = 32
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip sum 8d >= 25")
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip sum 8d >= 25mm")
     hit = _cell(out).values
     times = xr.open_zarr(out, consolidated=True).time.values
     # Left-labeled: window starting day 5 covers days 5–12.
@@ -81,7 +85,7 @@ def test_ten_day_sum_below(tmp_path, indicator_fn):
         "-o",
         str(tmp_path / "wet_out.zarr"),
         "--rule",
-        "precip sum 10d < 9",
+        "precip sum 10d < 9mm",
     )
     run_skill(
         indicator_fn,
@@ -90,7 +94,7 @@ def test_ten_day_sum_below(tmp_path, indicator_fn):
         "-o",
         str(tmp_path / "dry_out.zarr"),
         "--rule",
-        "precip sum 10d < 9",
+        "precip sum 10d < 9mm",
     )
     assert _cell(tmp_path / "wet_out.zarr").values[0] == pytest.approx(0)
     assert _cell(tmp_path / "dry_out.zarr").values[0] == pytest.approx(1)
@@ -208,7 +212,7 @@ def test_alias_matches_written_rule_on_data(tmp_path, indicator_fn):
         "-o",
         str(tmp_path / "written.zarr"),
         "--rule",
-        "precip sum 3d >= 20 and not precip consecutive-below 1 7d within 21d",
+        "precip sum 3d >= 20mm and not precip consecutive-below 1mm 7d within 21d",
     )
     np.testing.assert_array_equal(
         _cell(tmp_path / "alias.zarr").values,
@@ -228,7 +232,7 @@ def test_ensemble_probability(tmp_path, indicator_fn):
         "-o",
         str(tmp_path / "p.zarr"),
         "--rule",
-        "precip sum 8d >= 25",
+        "precip sum 8d >= 25mm",
         "--probability",
     )
     out = xr.open_zarr(tmp_path / "p.zarr", consolidated=True)
@@ -248,7 +252,7 @@ def test_detect_first_and_cumulative_probability(tmp_path, indicator_fn):
         "-o",
         str(tmp_path / "first.zarr"),
         "--rule",
-        "precip sum 8d >= 25",
+        "precip sum 8d >= 25mm",
         "--detect",
         "first",
     )
@@ -264,7 +268,7 @@ def test_detect_first_and_cumulative_probability(tmp_path, indicator_fn):
         "-o",
         str(tmp_path / "cdf.zarr"),
         "--rule",
-        "precip sum 8d >= 25",
+        "precip sum 8d >= 25mm",
         "--cumulative",
         "--probability",
     )
@@ -283,7 +287,7 @@ def test_detect_first_rejects_probability_and_cumulative(tmp_path, indicator_fn)
             "-o",
             str(tmp_path / "out.zarr"),
             "--rule",
-            "precip sum 8d >= 25",
+            "precip sum 8d >= 25mm",
             "--detect",
             "first",
             "--probability",
@@ -297,7 +301,7 @@ def test_detect_first_rejects_probability_and_cumulative(tmp_path, indicator_fn)
             "-o",
             str(tmp_path / "out2.zarr"),
             "--rule",
-            "precip sum 8d >= 25",
+            "precip sum 8d >= 25mm",
             "--detect",
             "first",
             "--cumulative",
@@ -319,7 +323,7 @@ def test_sub_daily_is_refused(tmp_path, indicator_fn):
             "-o",
             str(tmp_path / "out.zarr"),
             "--rule",
-            "precip sum 1d >= 1",
+            "precip sum 1d >= 1mm",
         )
     assert exc.value.code == 2
 
@@ -334,7 +338,7 @@ def test_missing_variable(tmp_path, indicator_fn):
             "-o",
             str(tmp_path / "out.zarr"),
             "--rule",
-            "precip sum 8d >= 25",
+            "precip sum 8d >= 25mm",
         )
     assert exc.value.code == 2
     run_skill(
@@ -344,7 +348,7 @@ def test_missing_variable(tmp_path, indicator_fn):
         "-o",
         str(tmp_path / "ok.zarr"),
         "--rule",
-        "precip sum 8d >= 25",
+        "precip sum 8d >= 25mm",
         "-v",
         "tp",
     )
@@ -362,61 +366,86 @@ def test_step_forecast_axis(tmp_path, indicator_fn):
         "-o",
         str(tmp_path / "out.zarr"),
         "--rule",
-        "precip sum 8d >= 25",
+        "precip sum 8d >= 25mm",
     )
     out = xr.open_zarr(tmp_path / "out.zarr", consolidated=True)
     assert "step" in out.dims
     assert out["indicator"].isel(step=0, latitude=0, longitude=0).values == pytest.approx(1)
 
 
-def test_weekly_rates_probability(tmp_path, indicator_fn):
-    # Weekly forecast in mm day-1: rates are compared as mm per week.
+def test_weekly_rates_probability(tmp_path, indicator_fn, capsys):
+    # Weekly forecast in mm day-1: rates are compared as rates.
     ds = make_forecast(n_step=3, lats=(1.0,), lons=(10.0,), name="tp", members=4)
     ds = ds.assign_coords(step=np.arange(3) * np.timedelta64(7, "D"))
     ds["tp"].attrs.update(units="mm day-1", **{DATA_INTERVAL_ATTR: "7 day"})
-    ds["tp"].values[:, :, 0, 0] = 10.0  # 70 mm/week
-    ds["tp"].values[:, 0, 0, 0] = [0.5, 1.0, 2.0, 3.0]  # week 1: 3.5, 7, 14, 21 mm
+    ds["tp"].values[:, :, 0, 0] = 10.0
+    ds["tp"].values[:, 0, 0, 0] = [0.5, 1.0, 2.0, 3.0]
     src = write_zarr(ds, tmp_path / "fc.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(
-        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "tp sum 1w <= 10", "--probability"
-    )
+    rule = "tp mean 1w <= 1.5mm/day"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", rule, "--probability")
     assert _cell(out, "probability").values.tolist() == pytest.approx([0.5, 0.0, 0.0])
-    with pytest.raises(SystemExit):
-        run_skill(
-            indicator_fn,
-            "-i",
-            str(src),
-            "-o",
-            str(tmp_path / "bad.zarr"),
-            "--rule",
-            "tp sum 10d <= 9",
-        )
+    for bad in ("tp mean 10d <= 9mm/day", "tp sum 1w <= 10mm"):
+        with pytest.raises(SystemExit):
+            run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "bad.zarr"), "--rule", bad)
+    assert "convert-to-totals" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
-    "units, scale", [("mm day-1", 1), ("mm hr-1", 1 / 24), ("kg m-2 s-1", 1 / 86400)]
+    "units, rule, hint",
+    [
+        ("mm day-1", "precip sum 3d >= 20mm", "run convert-to-totals"),
+        ("mm", "precip >= 5mm/day", "write the threshold as an amount"),
+        ("kg m-2 s-1", "precip >= 5mm/day", "run unit-convert"),
+        ("mm", "precip >= 5", "needs units, written after the number"),
+    ],
 )
-def test_precip_threshold_is_mm_whatever_the_stored_rate_units(
-    tmp_path, indicator_fn, units, scale
-):
-    ds = _daily(8)
-    ds["precip"].values[:, 0, 0] = np.array([0, 0, 12, 12, 12, 0, 0, 0]) * scale
+def test_threshold_units_must_match_the_data(tmp_path, indicator_fn, capsys, units, rule, hint):
+    ds = _daily(8, fill=10.0)
     ds["precip"].attrs["units"] = units
     src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--rule", rule)
+    assert exc.value.code == 2
+    assert hint in capsys.readouterr().err
+
+
+def test_threshold_units_match_whatever_the_spelling(tmp_path, indicator_fn):
+    ds = _daily(3)
+    ds["precip"].values[:, 0, 0] = [2.0, 6.0, 9.0]
+    ds["precip"].attrs["units"] = "mm day-1"
+    src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip sum 3d >= 20")
-    assert _cell(out).values[:6].tolist() == [0.0, 1.0, 1.0, 1.0, 0.0, 0.0]
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip >= 5mm/day")
+    assert _cell(out).values.tolist() == [0.0, 1.0, 1.0]
 
 
-def test_temperature_threshold_is_celsius(tmp_path, indicator_fn):
+def test_temperature_is_compared_as_stored(tmp_path, indicator_fn, capsys):
     ds = _daily(4, name="t2m")
-    ds["t2m"].values[:, 0, 0] = [300.0, 310.0, 300.0, 310.0]  # 26.85 / 36.85 deg C
+    ds["t2m"].values[:, 0, 0] = [300.0, 310.0, 300.0, 310.0]
     ds["t2m"].attrs.update(units="K", standard_name="air_temperature")
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "t2m mean 1d >= 35")
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "t2m mean 1d >= 308.15K")
     assert _cell(out).values.tolist() == [0.0, 1.0, 0.0, 1.0]
+    with pytest.raises(SystemExit):
+        run_skill(
+            indicator_fn, "-i", str(src), "-o", str(tmp_path / "c.zarr"), "--rule", "t2m > 35degC"
+        )
+    assert "run unit-convert" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "rule, hint",
+    [
+        ("precip count-above 1mm 3d >= 2mm", "counts steps"),
+        ("precip > 5parsecs_per_fortnight", "unknown units"),
+        ("precip > 5 mm", "unexpected 'mm'"),
+    ],
+)
+def test_threshold_units_parse_errors(indicator_mod, rule, hint):
+    with pytest.raises(UsageError, match=hint):
+        indicator_mod.parse_rule(rule)
 
 
 def test_detect_first_is_unknown_after_a_gap(tmp_path, indicator_fn):
@@ -432,7 +461,7 @@ def test_detect_first_is_unknown_after_a_gap(tmp_path, indicator_fn):
         "-o",
         str(out),
         "--rule",
-        "precip sum 3d >= 20",
+        "precip sum 3d >= 20mm",
         "--detect",
         "first",
     )
@@ -455,7 +484,7 @@ def test_backward_free_rule_has_no_tail_note(tmp_path, indicator_fn, capsys):
     src = write_zarr(_daily(10, fill=10.0), tmp_path / "in.zarr")
     run_skill(
         indicator_fn, "-i", str(src), "-o", str(tmp_path / "out.zarr"),
-        "--rule", "precip sum 1d >= 5",
+        "--rule", "precip sum 1d >= 5mm",
     )  # fmt: skip
     assert "looks" not in capsys.readouterr().err
 
@@ -466,7 +495,7 @@ def test_nan_day_makes_every_covering_window_unknown(tmp_path, indicator_fn):
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
     run_skill(
-        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip count-below 1 3d >= 3"
+        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip count-below 1mm 3d >= 3"
     )
     got = _cell(out).values  # windows starting days 0-2 cover the gap; days 6-7 are the tail
     np.testing.assert_array_equal(got, [np.nan, np.nan, np.nan, 1, 1, 1, np.nan, np.nan])
@@ -480,7 +509,7 @@ def test_cumulative_probability_tail_is_unknown(tmp_path, indicator_fn):
     out = tmp_path / "out.zarr"
     run_skill(
         indicator_fn, "-i", str(src), "-o", str(out),
-        "--rule", "precip sum 3d >= 20", "--cumulative", "--probability",
+        "--rule", "precip sum 3d >= 20mm", "--cumulative", "--probability",
     )  # fmt: skip
     np.testing.assert_array_equal(
         _cell(out, "probability").values, [0.5, 0.5, 0.5, 0.5, np.nan, np.nan]
@@ -494,7 +523,7 @@ def test_probability_is_unknown_when_a_member_is_missing(tmp_path, indicator_fn)
     out = tmp_path / "out.zarr"
     run_skill(
         indicator_fn, "-i", str(src), "-o", str(out),
-        "--rule", "precip sum 1d >= 20", "--probability",
+        "--rule", "precip sum 1d >= 20mm", "--probability",
     )  # fmt: skip
     np.testing.assert_array_equal(_cell(out, "probability").values, [np.nan, 0.0])
 
@@ -510,7 +539,7 @@ def test_detect_any_is_unknown_across_a_gap(tmp_path, indicator_fn):
         out = tmp_path / "out.zarr"
         run_skill(
             indicator_fn, "-i", str(src), "-o", str(out),
-            "--rule", "precip sum 1d >= 20", "--detect", "any",
+            "--rule", "precip sum 1d >= 20mm", "--detect", "any",
         )  # fmt: skip
         np.testing.assert_array_equal(_cell(out).values, want)
 
@@ -523,30 +552,30 @@ def test_within_one_true_day_decides_an_incomplete_lookahead(tmp_path, indicator
     out = tmp_path / "out.zarr"
     run_skill(
         indicator_fn, "-i", str(src), "-o", str(out),
-        "--rule", "not precip consecutive-below 1 3d within 5d",
+        "--rule", "not precip consecutive-below 1mm 3d within 5d",
     )  # fmt: skip
     # Spell mask is 1,1,1,0,0,nan,nan: day 0/1 see a spell; day 2 needs days 5-7.
     np.testing.assert_array_equal(_cell(out).values, [0, 0] + [np.nan] * 5)
 
 
 def test_plain_threshold_parses_as_one_step_value(indicator_mod):
-    spec = indicator_mod.parse_rule("tp > 25")
+    spec = indicator_mod.parse_rule("tp > 25mm")
     (clause,) = spec.clauses
     assert (clause.variable, clause.agg, clause.op, clause.threshold) == ("tp", "value", ">", 25.0)
-    clause = indicator_mod.parse_rule("not precip <= 1 within 3d").clauses[0]
+    clause = indicator_mod.parse_rule("not precip <= 1mm within 3d").clauses[0]
     assert clause.negate and clause.agg == "value" and clause.within == 3
 
 
-def test_plain_threshold_weekly_probability_matches_one_week_sum(tmp_path, indicator_fn):
-    # Weekly forecast in mm day-1: 'tp > 25' compares each week's own total in mm.
+def test_plain_threshold_weekly_probability_matches_one_week_mean(tmp_path, indicator_fn):
+    # Weekly forecast in mm day-1: 'tp > 3.5mm/day' compares each week's own rate.
     ds = make_forecast(n_step=2, lats=(1.0,), lons=(10.0,), name="tp", members=4)
     ds = ds.assign_coords(step=np.arange(2) * np.timedelta64(7, "D"))
     ds["tp"].attrs.update(units="mm day-1", **{DATA_INTERVAL_ATTR: "7 day"})
-    ds["tp"].values[:, :, 0, 0] = 10.0  # 70 mm/week
-    ds["tp"].values[:, 0, 0, 0] = [1.0, 3.0, 4.0, 5.0]  # week 1: 7, 21, 28, 35 mm
+    ds["tp"].values[:, :, 0, 0] = 10.0
+    ds["tp"].values[:, 0, 0, 0] = [1.0, 3.0, 4.0, 5.0]
     src = write_zarr(ds, tmp_path / "fc.zarr")
-    plain, summed = tmp_path / "plain.zarr", tmp_path / "sum.zarr"
-    for out, rule in ((plain, "tp > 25"), (summed, "tp sum 1w > 25")):
+    plain, summed = tmp_path / "plain.zarr", tmp_path / "mean.zarr"
+    for out, rule in ((plain, "tp > 3.5mm/day"), (summed, "tp mean 1w > 3.5mm/day")):
         run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", rule, "--probability")
     assert _cell(plain, "probability").values.tolist() == pytest.approx([0.5, 1.0])
     np.testing.assert_array_equal(
@@ -559,7 +588,7 @@ def test_plain_threshold_daily_has_no_lookahead_note(tmp_path, indicator_fn, cap
     ds["precip"].values[2, 0, 0] = 30.0
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip >= 30")
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip >= 30mm")
     assert _cell(out).values.tolist() == pytest.approx([0, 0, 1, 0, 0])
     assert "cannot be decided" not in capsys.readouterr().err
 
@@ -568,18 +597,18 @@ def test_plain_threshold_daily_has_no_lookahead_note(tmp_path, indicator_fn, cap
     "rule, hint",
     [
         ("list", "Examples:"),
-        ("precip consecutive-below 1 10d >= 7", "take no comparator"),
-        ("precip sum 3d >= 20 then precip sum 1d >= 1", "join with 'and' or 'or'"),
+        ("precip consecutive-below 1mm 10d >= 7", "take no comparator"),
+        ("precip sum 3d >= 20mm then precip sum 1d >= 1mm", "join with 'and' or 'or'"),
     ],
 )
 def test_parse_errors_show_examples(indicator_mod, rule, hint):
     with pytest.raises(UsageError) as exc:
         indicator_mod.parse_rule(rule)
     assert hint in str(exc.value)
-    assert "'precip > 25'" in str(exc.value)
+    assert "'precip sum 8d >= 25mm'" in str(exc.value)
 
 
-@pytest.mark.parametrize("rule", ["tp > 25 > 3", "precip sum 3d >= 20 >= 5"])
+@pytest.mark.parametrize("rule", ["tp > 25mm > 3", "precip sum 3d >= 20mm >= 5"])
 def test_extra_comparator_hint_only_for_consecutive(indicator_mod, rule):
     with pytest.raises(UsageError) as exc:
         indicator_mod.parse_rule(rule)
@@ -591,7 +620,7 @@ def _weekly_forecast():
     ds = make_forecast(n_step=3, lats=(1.0,), lons=(10.0,), name="tp", members=4)
     ds = ds.assign_coords(step=np.arange(3) * np.timedelta64(7, "D"))
     ds["tp"].attrs.update(units="mm day-1", **{DATA_INTERVAL_ATTR: "7 day"})
-    ds["tp"].values[:, 1, 0, 0] = [1.0, 3.0, 4.0, 5.0]  # week 2: 7, 21, 28, 35 mm
+    ds["tp"].values[:, 1, 0, 0] = [1.0, 3.0, 4.0, 5.0]
     return ds
 
 
@@ -599,7 +628,8 @@ def test_single_selected_week_probability(tmp_path, indicator_fn):
     # 'select --dim step' leaves step as a scalar coord; one week is still a valid axis.
     src = write_zarr(_weekly_forecast().isel(step=1), tmp_path / "wk2.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "tp > 25", "--probability")
+    rule = "tp > 3.5mm/day"
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", rule, "--probability")
     prob = _cell(out, "probability")
     assert "step" not in prob.dims
     assert prob.step.values == np.timedelta64(7, "D")
@@ -611,7 +641,8 @@ def test_single_selected_week_needs_data_interval(tmp_path, indicator_fn, capsys
     del ds["tp"].attrs[DATA_INTERVAL_ATTR]
     src = write_zarr(ds, tmp_path / "wk2.zarr")
     with pytest.raises(SystemExit) as exc:
-        run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--rule", "tp > 25")
+        rule = "tp mean 1w > 3.5mm/day"
+        run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "o.zarr"), "--rule", rule)
     assert exc.value.code == 2
     assert "data_interval" in capsys.readouterr().err
 
@@ -634,7 +665,7 @@ def test_static_variable_next_to_daily_series(tmp_path, indicator_fn):
     ds["land_sea_mask"] = (("latitude", "longitude"), [[0.9]], {"units": "1"})
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
-    rule = "land_sea_mask >= 0.5 and precip >= 1"
+    rule = "land_sea_mask >= 0.5 and precip >= 1mm"
     run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", rule, "--time-dim", "time")
     np.testing.assert_array_equal(_cell(out).values, [1.0, 1.0, 1.0])
     assert xr.open_zarr(out, consolidated=True)["indicator"].dims == ds["precip"].dims
@@ -646,7 +677,7 @@ def test_static_variable_next_to_daily_series(tmp_path, indicator_fn):
             "-o",
             str(tmp_path / "bad.zarr"),
             "--rule",
-            "land_sea_mask sum 2d >= 1 and precip >= 1",
+            "land_sea_mask sum 2d >= 1 and precip >= 1mm",
         )
     assert exc.value.code == 2
 
@@ -658,19 +689,20 @@ def test_hourly_plain_comparison_with_detect_any(tmp_path, indicator_fn):
     ds["t2m"][3] = 36.0
     src = write_zarr(ds, tmp_path / "hourly.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "t2m > 35", "--detect", "any")
+    run_skill(
+        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "t2m > 35degC", "--detect", "any"
+    )
     assert float(_cell(out)) == 1.0
 
 
-def test_static_precip_takes_step_from_data_interval(tmp_path, indicator_fn):
+def test_static_precip_rate_is_compared_as_stored(tmp_path, indicator_fn):
     pr = xr.Dataset(
         {"precip": (("latitude", "longitude"), [[1.0, 2.0]], {"units": "mm day-1"})},
         coords={"latitude": [1.0], "longitude": [10.0, 11.0]},
     )
-    pr["precip"].attrs[DATA_INTERVAL_ATTR] = "7 day"
     src = write_zarr(pr, tmp_path / "pr.zarr")
     out = tmp_path / "out.zarr"
-    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip > 10")
+    run_skill(indicator_fn, "-i", str(src), "-o", str(out), "--rule", "precip > 1.5mm/day")
     np.testing.assert_array_equal(
         xr.open_zarr(out, consolidated=True)["indicator"].values, [[0.0, 1.0]]
     )
@@ -683,7 +715,7 @@ def test_output_keeps_input_dim_order(tmp_path, indicator_fn):
     src = write_zarr(ds, tmp_path / "in.zarr")
     out = tmp_path / "out.zarr"
     run_skill(
-        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "land_sea_mask >= 0.5 and tp > 1"
+        indicator_fn, "-i", str(src), "-o", str(out), "--rule", "land_sea_mask >= 0.5 and tp > 1mm"
     )
     mask = xr.open_zarr(out, consolidated=True)["indicator"]
     assert mask.dims == ("number", "step", "latitude", "longitude")
