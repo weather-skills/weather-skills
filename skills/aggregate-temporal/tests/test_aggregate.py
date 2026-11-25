@@ -738,7 +738,7 @@ def test_end_time_reports_samples_left_out(tmp_path, aggregate, capsys):
     run_skill(
         aggregate, "-i", str(src), "-o", str(out), "--period", "weekly", "--end-time", "2026-01-14"
     )
-    assert "1 sample(s) at or after --end-time" in capsys.readouterr().err
+    assert "1 sample(s) at or after 2026-01-14 00:00:00" in capsys.readouterr().err
 
 
 def test_monthly_on_model_calendar_with_bounds(tmp_path, aggregate):
@@ -1124,3 +1124,51 @@ def test_day_start_hour_exits_2_on_daily_input(tmp_path, aggregate):
         run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"),
                   "--period", "weekly", "--day-start-hour", "6")  # fmt: skip
     assert exc.value.code == 2
+
+
+def _six_hourly():
+    """Two days of 6-hourly rates at 00, 06, 12 and 18 UTC."""
+    times = pd.date_range("2026-01-30", periods=8, freq="6h")
+    return make_gridded(n_time=8).assign_coords(time=times)
+
+
+@pytest.mark.parametrize("extra", [[], ["--end-time", "2026-02-01"]])
+def test_day_start_hour_off_the_sample_grid_exits_2(tmp_path, aggregate, extra, capsys):
+    src = write_zarr(_six_hourly(), tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "o.zarr"),
+                  "--period", "daily", "--day-start-hour", "3", *extra)  # fmt: skip
+    assert exc.value.code == 2
+    assert "would split input samples" in capsys.readouterr().err
+
+
+def test_day_start_hour_on_hourly_input_with_time_bounds(tmp_path, aggregate):
+    starts = pd.date_range("2026-01-30", periods=48, freq="h")
+    ds = make_gridded(n_time=48).assign_coords(time=starts)
+    ds["time_bounds"] = (("time", "nv"), np.stack([starts, starts + pd.Timedelta("1h")], axis=1))
+    ds["time"].attrs["bounds"] = "time_bounds"
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    out = tmp_path / "out.zarr"
+    run_skill(aggregate, "-i", str(src), "-o", str(out), "--period", "daily",
+              "--day-start-hour", "6")  # fmt: skip
+    result = xr.open_zarr(out, consolidated=True)
+    assert list(pd.DatetimeIndex(result["time"].values)) == [
+        pd.Timestamp("2026-01-29 06:00"),
+        pd.Timestamp("2026-01-30 06:00"),
+        pd.Timestamp("2026-01-31 06:00"),
+    ]
+    assert result[AGGREGATION_COVERAGE_COORD].values.tolist() == pytest.approx([0.25, 1.0, 0.75])
+
+
+@pytest.mark.filterwarnings("error::DeprecationWarning")
+def test_end_time_without_day_start_hour_raises_no_deprecation_warning(tmp_path, aggregate):
+    src = write_zarr(make_gridded(n_time=14, start="2026-01-01"), tmp_path / "in.zarr")
+    run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "out.zarr"),
+              "--period", "weekly", "--end-time", "2026-01-14")  # fmt: skip
+
+
+def test_end_time_note_names_the_shifted_cutoff(tmp_path, aggregate, capsys):
+    src = write_zarr(_six_hourly(), tmp_path / "in.zarr")
+    run_skill(aggregate, "-i", str(src), "-o", str(tmp_path / "out.zarr"),
+              "--period", "daily", "--day-start-hour", "6", "--end-time", "2026-01-31")  # fmt: skip
+    assert "3 sample(s) at or after 2026-01-31 06:00:00" in capsys.readouterr().err
