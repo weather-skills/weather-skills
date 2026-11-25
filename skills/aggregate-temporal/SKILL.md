@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py *)
 metadata:
-  version: "0.0.14"
+  version: "0.0.16"
   catalog-group: transforms
 ---
 
@@ -17,7 +17,7 @@ Averages (or takes the min or max of) a dataset's samples over time windows; rat
 
 ```bash
 # Fixed windows
-uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --period PERIOD [--end-time YYYY-MM-DD [--start-time YYYY-MM-DD]] [--method mean|max|min] [-v VAR ...] [--time-dim DIM]
+uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --period PERIOD [--end-time YYYY-MM-DD [--start-time YYYY-MM-DD]] [--day-start-hour H] [--method mean|max|min] [-v VAR ...] [--time-dim DIM]
 # Rolling window
 uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window LENGTH [--align left|right|center] [--stride S] [--method mean|max|min] [-v VAR ...] [--time-dim DIM]
 ```
@@ -34,6 +34,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/aggregate.py -i IN.zarr -o OUT.zarr --window 
 - `--time-dim` — axis to aggregate. Default: `time`, or `step` when there is no `time` axis or `time` has one value.
 - `--end-time` — with `--period` on `time`: exclusive right edge of the last window; windows walk backward from it. Pass the day after the last day you want (data through 2026-10-14 takes `--end-time 2026-10-15`). Later samples are dropped and counted on stderr. Not allowed with `monthly`; ignored on `step`.
 - `--start-time` — with `--end-time`: stop creating windows before this date.
+- `--day-start-hour` — with a whole-day `--period` (not `monthly`) on a `time` axis of sub-daily samples (with or without `time_bounds`): UTC hour (0-23) each bin starts at. With 6, daily bins run 06 UTC to 06 UTC and are labelled e.g. `2026-11-18T06:00`; `--end-time` and `--start-time` move to that hour of their date. The hour must fall on the input's sample grid (6-hourly samples at 00/06/12/18 take 0, 6, 12 or 18), or bins would split samples (exit 2). Daily or coarser input already sets its own day start (exit 2).
 
 ### Output
 - Same variables and units; with `--period` the aggregated axis holds one label per window, at the window's left edge; with `--window`, one per input sample. Without `--end-time`, `time` windows start at the first sample; `step` windows start at lead 0. Ensemble members stay separate.

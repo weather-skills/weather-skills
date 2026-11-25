@@ -28,7 +28,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.14"
+_SKILL_VERSION = "0.0.16"
 
 # Named --period / --window → (aggregation_period stamped, resample freq, length in days).
 NAMED_PERIODS = {
@@ -108,6 +108,14 @@ def _as_ns(val):
     "--start-time",
     help="With --period and --end-time: create no windows before this date.",
 )
+@weather_skill.argument(
+    "--day-start-hour",
+    type=int,
+    help=(
+        "With a whole-day --period on sub-daily time input: UTC hour each bin starts at "
+        "(0-23); e.g. 6 for 06-06 UTC days."
+    ),
+)
 def aggregate(
     ds,
     variable,
@@ -119,6 +127,7 @@ def aggregate(
     method,
     end_time,
     start_time,
+    day_start_hour,
     **kwargs,
 ):
     """Roll up a Zarr along its time or forecast-step axis into fixed or rolling windows (mean, min, or max)."""
@@ -251,6 +260,36 @@ def aggregate(
     monthly = key == "monthly"
     if window is not None and monthly:
         raise UsageError("--window takes a fixed length such as '30 day'; months vary in length")
+    shift_day = None
+    if day_start_hour is not None:
+        if not 0 <= day_start_hour <= 23:
+            raise UsageError(f"--day-start-hour must be 0-23; got {day_start_hour}")
+        # Input sample length and first sample start, from CF bounds or the sample interval.
+        cell_ns = first_ns = None
+        if bounds is not None:
+            cell_ns, first_ns = int((ends - starts).max()), int(starts.min())
+        elif cell:
+            cell_ns = round(float(parse_aggregation_period(cell).to("ns").magnitude))
+            first_ns = int(_as_ns(np.asarray(ds[dim].values)).min())
+        if (
+            period is None
+            or monthly
+            or not isinstance(length_days, int)
+            or np.asarray(ds[dim].values).dtype.kind != "M"
+            or not cell_ns
+            or cell_ns >= 86400 * 10**9
+        ):
+            raise UsageError(
+                "--day-start-hour needs a whole-day --period (not monthly) on a datetime "
+                "time axis of sub-daily samples; daily input already sets its own day start"
+            )
+        if (day_start_hour * 3600 * 10**9 - first_ns) % cell_ns:
+            raise UsageError(
+                f"--day-start-hour {day_start_hour} is not on the {cell_ns / 3600e9:g} hour "
+                f"sample grid of {dim} (first sample {str(ds[dim].values.min())[:16]}), so bins "
+                "would split input samples; pick an hour on that grid"
+            )
+        shift_day = pd.Timedelta(hours=day_start_hour)
 
     # --period at the input's own spacing: nothing to aggregate, just stamp it.
     same = False
@@ -368,15 +407,15 @@ def aggregate(
             )
         if raw.size == 0:
             raise UsageError(f"no {key} bins contained samples on {dim}")
-        later = 0
         if raw.dtype.kind == "M":
-            later = int((raw >= np.datetime64(end_time, "ns")).sum())
-        if later:
-            print(
-                f"Note: {later} sample(s) at or after --end-time {end_time} are not aggregated "
-                "(--end-time is exclusive: pass the day after the last day to include).",
-                file=sys.stderr,
-            )
+            cutoff = pd.Timestamp(end_time) + (shift_day or pd.Timedelta(0))
+            later = int((raw >= cutoff.to_datetime64()).sum())
+            if later:
+                print(
+                    f"Note: {later} sample(s) at or after {cutoff} are not aggregated "
+                    "(--end-time is exclusive: pass the day after the last day to include).",
+                    file=sys.stderr,
+                )
         if raw.dtype.kind == "O" and hasattr(raw.flat[0], "calendar"):
             import cftime
 
@@ -403,8 +442,8 @@ def aggregate(
         else:
             floor = pd.to_datetime(raw).min()
             if start_time is not None:
-                floor = max(floor, pd.Timestamp(start_time))
-            right = pd.Timestamp(end_time)
+                floor = max(floor, pd.Timestamp(start_time) + (shift_day or pd.Timedelta(0)))
+            right = pd.Timestamp(end_time) + (shift_day or pd.Timedelta(0))
         # Stop once the right edge is at/before the first sample — do not require
         # left >= floor, or a bin that still holds data is never created.
         while right > floor:
@@ -419,6 +458,8 @@ def aggregate(
             first = raw.min()
             shift = int((first - first.astype("M8[D]")) / np.timedelta64(1, "ns")) % cell_ns
             offset = pd.Timedelta(shift, "ns") if shift else None
+        if shift_day is not None:
+            offset = shift_day
         for label in ds.resample({dim: freq}, offset=offset).groups:
             if not hasattr(label, "calendar"):
                 label = pd.Timestamp(label)
