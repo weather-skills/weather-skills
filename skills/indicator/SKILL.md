@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.12 and uv.
 allowed-tools: Bash(uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py *)
 metadata:
-  version: "0.0.11"
+  version: "0.0.12"
   catalog-group: transforms
 ---
 
@@ -54,7 +54,7 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/indicator.py -i IN.zarr -o OUT.zarr --rule RU
 ### Notes
 - Values are compared as stored; nothing is converted. A threshold in other units, or a bare number on a variable with units, exits 2. Convert the data first: `unit-convert` for other units of the same quantity (e.g. K to degC), `convert-to-totals` for rates to amounts. Daily rates from a fetcher need `aggregate-temporal --period daily` before `convert-to-totals`.
 - Evaluate on individual members, not an ensemble mean. Windows must be whole steps (`1w`, not `10d`, on weekly data).
-- A variable without the time axis (a static field next to a daily series) takes only plain comparisons; it holds for every date.
+- A variable without the time axis (a static field next to a daily series) takes only plain comparisons; it holds for every date. A rule on static fields alone has no time axis, so `--detect`, `--cumulative` and `--first-within` exit 2.
 - A missing value makes every window that covers it NaN. `--detect first` gives no date when the rule is never true or when a gap comes before the first true day. `--detect any` is NaN when a gap could hide the event. `--probability` is NaN where any member is NaN.
 - The last dates of the input cannot be decided (27 days for `icpac-onset`). stderr prints the last decidable date; NaN after it means "not yet known".
 - `--detect` cannot be combined with `--cumulative`, and `--detect first` cannot be combined with `--probability`.

@@ -24,7 +24,7 @@ from weather_skills_core.units import (
 )
 
 # Auto-populated by the version-bump CI workflow. Do not edit manually.
-_SKILL_VERSION = "0.0.11"
+_SKILL_VERSION = "0.0.12"
 
 
 # --- --rule parsing ---------------------------------------------------------
@@ -670,6 +670,13 @@ def indicator(
         ds = ds.expand_dims(dim)
     step_days = 1 if plain and first_days is None else _step_days(ds, dim)
     mask = evaluate_spec(ds, spec, dim, variable, step_days)
+    # A rule on static fields alone gives a mask with no time axis to reduce along.
+    if dim not in mask.dims and (detect or cumulative or first_days):
+        raise UsageError(
+            f"rule {spec.source!r} reads only fields without a {dim!r} axis "
+            f"(mask dims {list(mask.dims)}), so --detect, --cumulative and --first-within "
+            "have no time to run along; drop them or add a time-varying field to the rule"
+        )
     out = apply_reductions(
         mask,
         dim,

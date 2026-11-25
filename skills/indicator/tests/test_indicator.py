@@ -766,6 +766,18 @@ def test_static_variable_next_to_daily_series(tmp_path, indicator_fn):
     assert exc.value.code == 2
 
 
+@pytest.mark.parametrize("extra", [["--detect", "any"], ["--cumulative"], ["--first-within", "2d"]])
+def test_static_only_rule_with_time_reduction_exits_2(tmp_path, indicator_fn, extra, capsys):
+    ds = _daily(3, fill=2.0)
+    ds["land_sea_mask"] = (("latitude", "longitude"), [[0.9]], {"units": "1"})
+    src = write_zarr(ds, tmp_path / "in.zarr")
+    with pytest.raises(SystemExit) as exc:
+        run_skill(indicator_fn, "-i", str(src), "-o", str(tmp_path / "out.zarr"),
+                  "--rule", "land_sea_mask >= 0.5", *extra)  # fmt: skip
+    assert exc.value.code == 2
+    assert "without a 'time' axis" in capsys.readouterr().err
+
+
 def test_hourly_plain_comparison_with_detect_any(tmp_path, indicator_fn):
     ds = make_gridded(n_time=6, lats=(1.0,), lons=(10.0,), name="t2m", fill=20.0)
     ds = ds.assign_coords(time=ds.time[0].values + np.arange(6) * np.timedelta64(1, "h"))
